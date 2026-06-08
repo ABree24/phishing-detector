@@ -17,3 +17,6 @@ features.to_csv('data/features.csv', index=False)
 
 print(f"Done. Shape: {features.shape}")
 print(features.head())
+
+print(extract_features(df['url'].iloc[0]))
+print(type(extract_features(df['url'].iloc[0])))

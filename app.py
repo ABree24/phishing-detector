@@ -1,0 +1,186 @@
+import streamlit as st
+import joblib
+import pandas as pd
+import plotly.graph_objects as go
+
+st.set_page_config(
+    page_title="Phishing Detector",
+    page_icon="assets/phishing.png",
+    layout="centered"
+)
+
+# ── All 30 features the model expects, with neutral defaults ──
+ALL_FEATURE_DEFAULTS = {
+    'Having_IP_Address':       1,
+    'URL_Length':              1,
+    'Shortining_Service':      1,
+    'Having_At_Symbol':        1,
+    'Double_Slash_Redirect':   1,
+    'Prefix_Suffix':           1,
+    'Having_Sub_Domain':       1,
+    'SSLfinal_State':          1,
+    'Domain_Reg_Length':       1,
+    'Favicon':                 1,
+    'Port':                    1,
+    'HTTPS_Token':             1,
+    'Request_URL':             1,
+    'URL_of_Anchor':           1,
+    'Links_in_Tags':           1,
+    'SFH':                     1,
+    'Submitting_to_Email':     1,
+    'Abnormal_URL':            1,
+    'Redirect':                0,
+    'On_Mouseover':            1,
+    'RightClick':              1,
+    'PopUpWindow':             1,
+    'Iframe':                  1,
+    'Age_of_Domain':           1,
+    'DNS_Record':              1,
+    'Web_Traffic':             1,
+    'Page_Rank':               1,
+    'Google_Index':            1,
+    'Links_Pointing_to_Page':  1,
+    'Statistical_Report':      1,
+}
+
+# ── Top 10 features shown to the user ──
+TOP_FEATURES = {
+    'SSLfinal_State': {
+        'label': '1. Does the site have a valid SSL certificate?',
+        'help': 'Check if the browser shows a padlock. Trusted = green padlock from a known authority.',
+        'options': {'Trusted — green padlock (1)': 1, 'Untrusted / self-signed (0)': 0, 'No HTTPS at all (-1)': -1}
+    },
+    'URL_of_Anchor': {
+        'label': '2. Do links on the page point to external or mismatched domains?',
+        'help': 'On a real site, most links point back to the same domain. Phishing pages load content from random external URLs.',
+        'options': {'Mostly internal links (1)': 1, 'Mix of internal and external (0)': 0, 'Mostly external links (-1)': -1}
+    },
+    'Prefix_Suffix': {
+        'label': '3. Does the domain name contain a hyphen?',
+        'help': 'Attackers use hyphens to mimic real domains e.g. paypal-secure.com instead of paypal.com.',
+        'options': {'No hyphen (1)': 1, 'Has hyphen (-1)': -1}
+    },
+    'Web_Traffic': {
+        'label': '4. How well known is this website?',
+        'help': 'Legitimate sites usually have measurable traffic. Brand new or obscure sites with no traffic history are suspicious.',
+        'options': {'Well known site (1)': 1, 'Low traffic (0)': 0, 'No traffic data (-1)': -1}
+    },
+    'Having_Sub_Domain': {
+        'label': '5. How many subdomains does the URL have?',
+        'help': 'Phishing URLs often use multiple subdomains like login.verify.paypal.fakesite.com to look legitimate.',
+        'options': {'None (1)': 1, 'One subdomain (0)': 0, 'Multiple subdomains (-1)': -1}
+    },
+    'Links_in_Tags': {
+        'label': '6. Do the meta and script tags load from external domains?',
+        'help': 'Legitimate sites load their own scripts. Phishing pages pull resources from unrelated external servers.',
+        'options': {'Mostly internal (1)': 1, 'Mixed (0)': 0, 'Mostly external (-1)': -1}
+    },
+    'Request_URL': {
+        'label': '7. Does the page load images/videos from external domains?',
+        'help': 'A phishing page is often just a screenshot of a real site — images are hotlinked from the real domain.',
+        'options': {'Loads from same domain (1)': 1, 'Loads mostly from external (-1)': -1}
+    },
+    'SFH': {
+        'label': '8. Where does the login or contact form submit data?',
+        'help': 'SFH = Server Form Handler. Legitimate forms submit to the same domain. Phishing forms send your data elsewhere.',
+        'options': {'Submits to same domain (1)': 1, 'Blank or empty action (0)': 0, 'Submits to external domain (-1)': -1}
+    },
+    'Domain_Reg_Length': {
+        'label': '9. How long is the domain registered for?',
+        'help': 'Legitimate businesses register domains for years. Phishing sites are often registered for only a few months.',
+        'options': {'Registered for over 1 year (1)': 1, 'Registered for less than 1 year (-1)': -1}
+    },
+    'Having_IP_Address': {
+        'label': '10. Does the URL use an IP address instead of a domain name?',
+        'help': 'A URL like http://192.168.1.1/login is a red flag. Real sites use domain names, not raw IP addresses.',
+        'options': {'Uses a domain name (1)': 1, 'Uses an IP address (-1)': -1}
+    },
+}
+
+@st.cache_resource
+def load_model():
+    return joblib.load('models/phishing_model.pkl')
+
+model = load_model()
+
+# ── Header ──
+st.image("assets/phishing.png", width=80)
+st.markdown("# Phishing Website Detector")
+st.markdown("Answer 10 questions about a website to check if it shows signs of being a phishing site.")
+st.markdown("---")
+
+# ── Questions ──
+st.subheader("Website Characteristics")
+user_inputs = {}
+
+for feature_key, meta in TOP_FEATURES.items():
+    choice = st.selectbox(
+        label=meta['label'],
+        options=list(meta['options'].keys()),
+        help=meta['help'],
+        key=feature_key
+    )
+    user_inputs[feature_key] = meta['options'][choice]
+
+st.markdown("---")
+
+# ── Analyse ──
+if st.button("🔍 Analyse Website", use_container_width=True):
+
+    # Build full 30-feature input using defaults for unused features
+    full_input = ALL_FEATURE_DEFAULTS.copy()
+    full_input.update(user_inputs)
+    input_df = pd.DataFrame([full_input])
+
+    prediction = model.predict(input_df)[0]
+    probability = model.predict_proba(input_df)[0]
+    phishing_prob = probability[1] * 100
+    legit_prob = probability[0] * 100
+
+    st.markdown("## Result")
+    res_col1, res_col2 = st.columns([1, 1])
+
+    with res_col1:
+        if prediction == 1:
+            st.error("### ⚠️ HIGH RISK — Likely Phishing")
+            st.markdown(f"The model is **{phishing_prob:.1f}% confident** this site shows phishing characteristics.")
+        else:
+            st.success("### ✅ LOW RISK — Likely Legitimate")
+            st.markdown(f"The model is **{legit_prob:.1f}% confident** this site appears legitimate.")
+
+    with res_col2:
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=phishing_prob,
+            title={'text': "Phishing Risk %"},
+            gauge={
+                'axis': {'range': [0, 100]},
+                'bar': {'color': "#E74C3C"},
+                'steps': [
+                    {'range': [0,  40], 'color': "#D5F5E3"},
+                    {'range': [40, 70], 'color': "#FDEBD0"},
+                    {'range': [70,100], 'color': "#FADBD8"},
+                ],
+            }
+        ))
+        fig.update_layout(height=250, margin=dict(t=40, b=0, l=20, r=20))
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Red flags summary ──
+    st.markdown("### 🚩 Red Flags Detected")
+    red_flags = [(TOP_FEATURES[k]['label'].split('. ')[1], v)
+                 for k, v in user_inputs.items() if v == -1]
+    yellow_flags = [(TOP_FEATURES[k]['label'].split('. ')[1], v)
+                    for k, v in user_inputs.items() if v == 0]
+
+    if red_flags:
+        for label, _ in red_flags:
+            st.error(f"🔴 {label}")
+    if yellow_flags:
+        for label, _ in yellow_flags:
+            st.warning(f"🟡 {label}")
+    if not red_flags and not yellow_flags:
+        st.success("🟢 No red flags detected across all 10 checks.")
+
+st.markdown("---")
+st.caption("Built with Python · scikit-learn · Streamlit | UCI Phishing Dataset | 89% accuracy on 11,055 samples")

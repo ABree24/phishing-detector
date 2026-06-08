@@ -1,15 +1,32 @@
 import pandas as pd
+import re
 
-phishing = pd.read_csv('data/phishing_urls.csv', usecols=['url'])
-phishing['label'] = 1 # 1 = phishing
+# Parse the .arff file manually
+rows = []
+in_data = False
 
-legit = pd.read_csv('data/legitimate_urls.csv', header=None, names=['rank','url'])
-legit = legit[['url']].head(10000)
-legit['label'] = 0 # 0 = legitimate
+with open('data/uci_phishing.arff', 'r') as f:
+    for line in f:
+        line = line.strip()
+        if line.upper() == '@DATA':
+            in_data = True
+            continue
+        if in_data and line and not line.startswith('%'):
+            rows.append(line.split(','))
 
-df = pd.concat([phishing, legit], ignore_index=True)
-df = df.dropna().drop_duplicates(subset='url')
+df = pd.DataFrame(rows)
+
+# Last column is the label: 1 = legitimate, -1 = phishing
+df['label'] = df.iloc[:, -1].apply(lambda x: 0 if x.strip() == '-1' else 1)
+df = df.drop(df.columns[-2], axis=1)  # drop original label col
+
+# All other columns are already numeric features
+feature_cols = df.columns[:-1].tolist()
+df[feature_cols] = df[feature_cols].apply(pd.to_numeric, errors='coerce')
+df = df.dropna()
 df = df.sample(frac=1, random_state=42).reset_index(drop=True)
 
-df.to_csv('data/dataset.csv', index=False)
-print(f"Dataset saved: {len(df)} URLs, {df['label'].value_counts().to_dict()}")
+df.to_csv('data/features.csv', index=False)
+print(f"Dataset ready: {len(df)} samples")
+print(df['label'].value_counts())
+print(df.head())
