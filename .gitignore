@@ -1,15 +1,15 @@
 # Virtual environment
 venv/
 
+# Entire data folder (contains large files and third-party datasets)
+data/
+
+# Models (optional - comment out if you want models on GitHub)
+# models/
+
 # Environment variables / secrets
 .env
 *.env
-
-# Large data files
-data/phishing_urls.csv
-data/legitimate_urls.csv
-data/dataset.csv
-data/features.csv
 
 # Python cache
 __pycache__/
