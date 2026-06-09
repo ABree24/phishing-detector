@@ -2,6 +2,50 @@ import streamlit as st
 import joblib
 import pandas as pd
 import plotly.graph_objects as go
+import requests
+import time
+import os
+from dotenv import load_dotenv
+load_dotenv()
+VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
+
+def check_virustotal(url):
+    """Submit a URL to VirusTotal and return the scan results."""
+    headers = {"x-apikey": VIRUSTOTAL_API_KEY}
+    
+    try:
+        # Step 1 — Submit the URL for scanning
+        submit_response = requests.post(
+            "https://www.virustotal.com/api/v3/urls",
+            headers=headers,
+            data={"url": url},
+            timeout=10
+        )
+        
+        if submit_response.status_code != 200:
+            return None, "Could not submit URL to VirusTotal."
+        
+        # Step 2 — Get the analysis ID
+        analysis_id = submit_response.json()["data"]["id"]
+        
+        # Step 3 — Wait briefly then fetch results
+        time.sleep(3)
+        result_response = requests.get(
+            f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
+            headers=headers,
+            timeout=10
+        )
+        
+        if result_response.status_code != 200:
+            return None, "Could not retrieve VirusTotal results."
+        
+        stats = result_response.json()["data"]["attributes"]["stats"]
+        return stats, None
+    
+    except requests.exceptions.Timeout:
+        return None, "VirusTotal request timed out."
+    except Exception as e:
+        return None, f"VirusTotal error: {str(e)}"
 
 st.set_page_config(
     page_title="Phishing Detector",
@@ -181,6 +225,51 @@ if st.button("🔍 Analyse Website", use_container_width=True):
             st.warning(f"🟡 {label}")
     if not red_flags and not yellow_flags:
         st.success("🟢 No red flags detected across all 10 checks.")
+ # ── VirusTotal Integration ──
+    st.markdown("---")
+    st.markdown("### 🦠 VirusTotal Cross-Check")
+    st.caption("Optionally cross-reference with 70+ antivirus engines.")
+
+    vt_url = st.text_input(
+        "Enter the website URL to scan with VirusTotal:",
+        placeholder="https://example.com",
+        key="vt_url"
+    )
+
+    if st.button("🔎 Scan with VirusTotal"):
+        if not vt_url:
+            st.warning("Please enter a URL above to scan.")
+        elif not VIRUSTOTAL_API_KEY:
+            st.error("VirusTotal API key not found. Check your .env file.")
+        else:
+            with st.spinner("Submitting to VirusTotal... this takes about 5 seconds"):
+                stats, error = check_virustotal(vt_url)
+
+            if error:
+                st.error(f"Error: {error}")
+            else:
+                malicious = stats.get("malicious", 0)
+                suspicious = stats.get("suspicious", 0)
+                harmless = stats.get("harmless", 0)
+                undetected = stats.get("undetected", 0)
+                total = malicious + suspicious + harmless + undetected
+
+                # Result banner
+                if malicious > 5:
+                    st.error(f"⚠️ FLAGGED — {malicious} out of {total} engines detected this as malicious.")
+                elif malicious > 0:
+                    st.warning(f"🟡 SUSPICIOUS — {malicious} engines flagged this. Proceed with caution.")
+                else:
+                    st.success(f"✅ CLEAN — 0 out of {total} engines flagged this URL.")
+
+                # Breakdown table
+                vt_col1, vt_col2, vt_col3, vt_col4 = st.columns(4)
+                vt_col1.metric("🔴 Malicious", malicious)
+                vt_col2.metric("🟡 Suspicious", suspicious)
+                vt_col3.metric("🟢 Harmless", harmless)
+                vt_col4.metric("⚪ Undetected", undetected)
+
+                st.caption(f"Scanned by {total} antivirus engines via VirusTotal API.")       
 
 st.markdown("---")
 st.caption("Built with Python · scikit-learn · Streamlit | UCI Phishing Dataset | 89% accuracy on 11,055 samples")
