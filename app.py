@@ -148,7 +148,7 @@ def load_model():
 model = load_model()
 
 # ── Header ──
-st.image("assets/phishing.gif", width=80)
+st.image("assets/phishing.png", width=100)
 st.markdown("# Phishing Website Detector")
 st.markdown("Two ways to check a website — auto analyse a URL or answer manually.")
 st.markdown("---")
