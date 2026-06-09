@@ -148,86 +148,159 @@ def load_model():
 model = load_model()
 
 # ── Header ──
-st.image("assets/phishing.png", width=80)
+st.image("assets/phishing.gif", width=80)
 st.markdown("# Phishing Website Detector")
-st.markdown("Answer 10 questions about a website to check if it shows signs of being a phishing site.")
+st.markdown("Two ways to check a website — auto analyse a URL or answer manually.")
 st.markdown("---")
+
+# ── Tabs ──
+tab1, tab2 = st.tabs(["🔗 Auto URL Analyser", "📋 Manual Checklist"])
 
 # ── Questions ──
-st.subheader("Website Characteristics")
-user_inputs = {}
+with tab2:
+    st.subheader("Manual Website Characteristics")
+    st.caption("Answer each question based on what you observe about the website.")
 
-for feature_key, meta in TOP_FEATURES.items():
-    choice = st.selectbox(
-        label=meta['label'],
-        options=list(meta['options'].keys()),
-        help=meta['help'],
-        key=feature_key
+    # ── your existing questions code here (no changes needed) ──
+    user_inputs = {}
+    for feature_key, meta in TOP_FEATURES.items():
+        choice = st.selectbox(
+            label=meta['label'],
+            options=list(meta['options'].keys()),
+            help=meta['help'],
+            key=feature_key
+        )
+        user_inputs[feature_key] = meta['options'][choice]
+
+    st.markdown("---")
+
+    if st.button("🔍 Analyse Website", use_container_width=True):
+        full_input = ALL_FEATURE_DEFAULTS.copy()
+        full_input.update(user_inputs)
+        input_df = pd.DataFrame([full_input])
+        input_array = input_df.values
+        prediction = model.predict(input_array)[0]
+        probability = model.predict_proba(input_array)[0]
+        phishing_prob = probability[1] * 100
+        legit_prob = probability[0] * 100
+
+        st.markdown("## Result")
+        res_col1, res_col2 = st.columns([1, 1])
+
+        with res_col1:
+            if prediction == 1:
+                st.error("### ⚠️ HIGH RISK — Likely Phishing")
+                st.markdown(f"The model is **{phishing_prob:.1f}% confident** this site shows phishing characteristics.")
+            else:
+                st.success("### ✅ LOW RISK — Likely Legitimate")
+                st.markdown(f"The model is **{legit_prob:.1f}% confident** this site appears legitimate.")
+
+        with res_col2:
+            fig = go.Figure(go.Indicator(
+                mode="gauge+number",
+                value=phishing_prob,
+                title={'text': "Phishing Risk %"},
+                gauge={
+                    'axis': {'range': [0, 100]},
+                    'bar': {'color': "#E74C3C"},
+                    'steps': [
+                        {'range': [0,  40], 'color': "#D5F5E3"},
+                        {'range': [40, 70], 'color': "#FDEBD0"},
+                        {'range': [70,100], 'color': "#FADBD8"},
+                    ],
+                }
+            ))
+            fig.update_layout(height=250, margin=dict(t=40, b=0, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
+
+        st.markdown("### 🚩 Red Flags Detected")
+        red_flags = [(TOP_FEATURES[k]['label'].split('. ')[1], v)
+                     for k, v in user_inputs.items() if v == -1]
+        yellow_flags = [(TOP_FEATURES[k]['label'].split('. ')[1], v)
+                        for k, v in user_inputs.items() if v == 0]
+        if red_flags:
+            for label, _ in red_flags:
+                st.error(f"🔴 {label}")
+        if yellow_flags:
+            for label, _ in yellow_flags:
+                st.warning(f"🟡 {label}")
+        if not red_flags and not yellow_flags:
+            st.success("🟢 No red flags detected across all 10 checks.")
+with tab1:
+    st.subheader("🔗 Auto URL Analyser")
+    st.markdown("Paste any URL and the app will automatically analyse it for phishing signals.")
+    st.caption("⚠️ Never visit a suspicious URL directly — paste it here instead.")
+
+    auto_url = st.text_input(
+        "Paste URL to analyse:",
+        placeholder="https://example.com",
+        key="auto_url"
     )
-    user_inputs[feature_key] = meta['options'][choice]
 
-st.markdown("---")
-
-# ── Analyse ──
-if st.button("🔍 Analyse Website", use_container_width=True):
-
-    # Build full 30-feature input using defaults for unused features
-    full_input = ALL_FEATURE_DEFAULTS.copy()
-    full_input.update(user_inputs)
-    input_df = pd.DataFrame([full_input])
-# Convert to numpy array to bypass feature name validation
-# Use numpy array to bypass feature name validation
-    input_array = input_df.values
-    prediction = model.predict(input_array)[0]
-    probability = model.predict_proba(input_array)[0]
-    phishing_prob = probability[1] * 100
-    legit_prob = probability[0] * 100
-
-    st.markdown("## Result")
-    res_col1, res_col2 = st.columns([1, 1])
-
-    with res_col1:
-        if prediction == 1:
-            st.error("### ⚠️ HIGH RISK — Likely Phishing")
-            st.markdown(f"The model is **{phishing_prob:.1f}% confident** this site shows phishing characteristics.")
+    if st.button("Auto Analyse", use_container_width=True):
+        if not auto_url:
+            st.warning("Please enter a URL above.")
         else:
-            st.success("### ✅ LOW RISK — Likely Legitimate")
-            st.markdown(f"The model is **{legit_prob:.1f}% confident** this site appears legitimate.")
+            with st.spinner("Analysing URL... checking SSL, domain age, redirects..."):
+                try:
+                    from src.url_analyser import analyse_url
+                    auto_features, findings = analyse_url(auto_url)
 
-    with res_col2:
-        fig = go.Figure(go.Indicator(
-            mode="gauge+number",
-            value=phishing_prob,
-            title={'text': "Phishing Risk %"},
-            gauge={
-                'axis': {'range': [0, 100]},
-                'bar': {'color': "#E74C3C"},
-                'steps': [
-                    {'range': [0,  40], 'color': "#D5F5E3"},
-                    {'range': [40, 70], 'color': "#FDEBD0"},
-                    {'range': [70,100], 'color': "#FADBD8"},
-                ],
-            }
-        ))
-        fig.update_layout(height=250, margin=dict(t=40, b=0, l=20, r=20))
-        st.plotly_chart(fig, use_container_width=True)
+                    # Build full input for model
+                    full_auto_input = ALL_FEATURE_DEFAULTS.copy()
+                    full_auto_input.update(auto_features)
+                    auto_df = pd.DataFrame([full_auto_input])
+                    auto_array = auto_df.values
+                    prediction = model.predict(auto_array)[0]
+                    probability = model.predict_proba(auto_array)[0]
+                    phishing_prob = probability[1] * 100
 
-    # ── Red flags summary ──
-    st.markdown("### 🚩 Red Flags Detected")
-    red_flags = [(TOP_FEATURES[k]['label'].split('. ')[1], v)
-                 for k, v in user_inputs.items() if v == -1]
-    yellow_flags = [(TOP_FEATURES[k]['label'].split('. ')[1], v)
-                    for k, v in user_inputs.items() if v == 0]
+                    # ── Result ──
+                    st.markdown("## Result")
+                    r_col1, r_col2 = st.columns([1, 1])
 
-    if red_flags:
-        for label, _ in red_flags:
-            st.error(f"🔴 {label}")
-    if yellow_flags:
-        for label, _ in yellow_flags:
-            st.warning(f"🟡 {label}")
-    if not red_flags and not yellow_flags:
-        st.success("🟢 No red flags detected across all 10 checks.")
+                    with r_col1:
+                        if prediction == 1:
+                            st.error("### ⚠️ HIGH RISK — Likely Phishing")
+                            st.markdown(f"Model is **{phishing_prob:.1f}% confident** this is phishing.")
+                        else:
+                            st.success("### ✅ LOW RISK — Likely Legitimate")
+                            st.markdown(f"Model is **{(100-phishing_prob):.1f}% confident** this is legitimate.")
 
+                    with r_col2:
+                        fig = go.Figure(go.Indicator(
+                            mode="gauge+number",
+                            value=phishing_prob,
+                            title={'text': "Phishing Risk %"},
+                            gauge={
+                                'axis': {'range': [0, 100]},
+                                'bar': {'color': "#E74C3C"},
+                                'steps': [
+                                    {'range': [0,  40], 'color': "#D5F5E3"},
+                                    {'range': [40, 70], 'color': "#FDEBD0"},
+                                    {'range': [70,100], 'color': "#FADBD8"},
+                                ],
+                            }
+                        ))
+                        fig.update_layout(height=250, margin=dict(t=40, b=0, l=20, r=20))
+                        st.plotly_chart(fig, use_container_width=True)
+
+                    # ── Plain English Findings ──
+                    st.markdown("### 🔍 What We Found")
+                    st.caption("Here is what the automatic analysis detected about this URL:")
+
+                    for feature_key, explanation in findings.items():
+                        if explanation.startswith("🔴"):
+                            st.error(explanation)
+                        elif explanation.startswith("🟡"):
+                            st.warning(explanation)
+                        else:
+                            st.success(explanation)
+
+                except Exception as e:
+                    st.error(f"Could not analyse URL: {str(e)}")
+                    st.caption("Try checking the URL format — make sure it starts with http:// or https://")
+ 
  # ── VirusTotal Integration ──
 st.markdown("---")
 st.markdown("### 🦠 VirusTotal Cross-Check")
