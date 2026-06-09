@@ -86,6 +86,18 @@ ALL_FEATURE_DEFAULTS = {
     'Links_Pointing_to_Page':  1,
     'Statistical_Report':      1,
 }
+CORRECT_ORDER = [
+    'Having_IP_Address', 'URL_Length', 'Shortining_Service',
+    'Having_At_Symbol', 'Double_Slash_Redirect', 'Prefix_Suffix',
+    'Having_Sub_Domain', 'SSLfinal_State', 'Domain_Reg_Length',
+    'Favicon', 'Port', 'HTTPS_Token', 'Request_URL',
+    'URL_of_Anchor', 'Links_in_Tags', 'SFH',
+    'Submitting_to_Email', 'Abnormal_URL', 'Redirect',
+    'On_Mouseover', 'RightClick', 'PopUpWindow', 'Iframe',
+    'Age_of_Domain', 'DNS_Record', 'Web_Traffic',
+    'Page_Rank', 'Google_Index', 'Links_Pointing_to_Page',
+    'Statistical_Report'
+]
 
 # ── Top 10 features shown to the user ──
 TOP_FEATURES = {
@@ -177,7 +189,7 @@ with tab2:
     if st.button("🔍 Analyse Website", use_container_width=True):
         full_input = ALL_FEATURE_DEFAULTS.copy()
         full_input.update(user_inputs)
-        input_df = pd.DataFrame([full_input])
+        input_df = pd.DataFrame([full_input])[CORRECT_ORDER]
         input_array = input_df.values
         prediction = model.predict(input_array)[0]
         probability = model.predict_proba(input_array)[0]
@@ -246,14 +258,30 @@ with tab1:
                     from src.url_analyser import analyse_url
                     auto_features, findings = analyse_url(auto_url)
 
-                    # Build full input for model
                     full_auto_input = ALL_FEATURE_DEFAULTS.copy()
                     full_auto_input.update(auto_features)
-                    auto_df = pd.DataFrame([full_auto_input])
+
+                    # Force exact column order to match model training
+                    CORRECT_ORDER = [
+                        'Having_IP_Address', 'URL_Length', 'Shortining_Service',
+                        'Having_At_Symbol', 'Double_Slash_Redirect', 'Prefix_Suffix',
+                        'Having_Sub_Domain', 'SSLfinal_State', 'Domain_Reg_Length',
+                        'Favicon', 'Port', 'HTTPS_Token', 'Request_URL',
+                        'URL_of_Anchor', 'Links_in_Tags', 'SFH',
+                        'Submitting_to_Email', 'Abnormal_URL', 'Redirect',
+                        'On_Mouseover', 'RightClick', 'PopUpWindow', 'Iframe',
+                        'Age_of_Domain', 'DNS_Record', 'Web_Traffic',
+                        'Page_Rank', 'Google_Index', 'Links_Pointing_to_Page',
+                        'Statistical_Report'
+                    ]
+
+                    auto_df = pd.DataFrame([full_auto_input])[CORRECT_ORDER]
                     auto_array = auto_df.values
+
                     prediction = model.predict(auto_array)[0]
                     probability = model.predict_proba(auto_array)[0]
                     phishing_prob = probability[1] * 100
+                    legit_prob = probability[0] * 100
 
                     # ── Result ──
                     st.markdown("## Result")
@@ -300,8 +328,8 @@ with tab1:
                 except Exception as e:
                     st.error(f"Could not analyse URL: {str(e)}")
                     st.caption("Try checking the URL format — make sure it starts with http:// or https://")
- 
- # ── VirusTotal Integration ──
+
+# ── VirusTotal Integration ──
 st.markdown("---")
 st.markdown("### 🦠 VirusTotal Cross-Check")
 st.caption("Optionally cross-reference with 70+ antivirus engines.")
