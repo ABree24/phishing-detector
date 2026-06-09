@@ -7,6 +7,7 @@ import whois
 from urllib.parse import urlparse, urljoin
 from datetime import datetime
 from html.parser import HTMLParser
+import threading
 
 # Known URL shortener domains
 URL_SHORTENERS = [
@@ -122,12 +123,12 @@ def safe_fetch_html(url):
     try:
         response = requests.get(
             url,
-            timeout=8,
+            timeout=5,
             headers={'User-Agent': 'Mozilla/5.0'},
             allow_redirects=True
         )
         if response.status_code == 200:
-            return response.text
+            return response.text[:100000]  # Limit to first 100KB
     except Exception:
         pass
     return ''
@@ -249,16 +250,25 @@ def check_ssl(hostname):
 
 
 def get_domain_age_days(domain):
-    try:
-        record = whois.whois(domain)
-        creation = record.creation_date
-        if isinstance(creation, list):
-            creation = creation[0]
-        if isinstance(creation, datetime):
-            return (datetime.now() - creation).days
-    except Exception:
-        pass
-    return None
+    """Get domain age with timeout protection."""
+    result = [None]
+    
+    def fetch_whois():
+        try:
+            record = whois.whois(domain)
+            creation = record.creation_date
+            if isinstance(creation, list):
+                creation = creation[0]
+            if isinstance(creation, datetime):
+                result[0] = (datetime.now() - creation).days
+        except Exception:
+            pass
+    
+    thread = threading.Thread(target=fetch_whois, daemon=True)
+    thread.start()
+    thread.join(timeout=4)  # 4 second timeout
+    
+    return result[0]
 
 
 def check_redirects(url):
@@ -267,7 +277,7 @@ def check_redirects(url):
         response = requests.get(
             url,
             allow_redirects=True,
-            timeout=8,
+            timeout=5,
             headers={'User-Agent': 'Mozilla/5.0'}
         )
         redirect_count = len(response.history)
@@ -278,8 +288,33 @@ def check_redirects(url):
 
 def analyse_url(url):
     """
-    Automatically extract all model features from a URL.
+    Automatically extract all model features from a URL with timeout protection.
     Returns a dict of feature values and a dict of human-readable explanations.
+    """
+    result = [None, None]
+    error = [None]
+    
+    def do_analysis():
+        try:
+            result[0], result[1] = _analyse_url_impl(url)
+        except Exception as e:
+            error[0] = str(e)
+    
+    thread = threading.Thread(target=do_analysis, daemon=True)
+    thread.start()
+    thread.join(timeout=12)  # 12 second total timeout
+    
+    if error[0]:
+        raise ValueError(error[0])
+    if result[0] is None:
+        raise TimeoutError("URL analysis took too long and was cancelled")
+    
+    return result[0], result[1]
+
+
+def _analyse_url_impl(url):
+    """
+    Internal implementation of URL analysis (called with timeout wrapper).
     """
     url = normalize_url(url)
     parsed = urlparse(url)
