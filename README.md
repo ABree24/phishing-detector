@@ -4,7 +4,7 @@
 > Built as a cybersecurity portfolio project using Python, scikit-learn, and Streamlit.
 
 ## 🔴 Live Demo
-👉 **[Try the app here](https://phishing-detector-abree.streamlit.app/)** ← replace with your Streamlit link after deploying
+👉 **[Try the app here](https://phishing-detector-abree.streamlit.app/)** 
 
 ---
 
