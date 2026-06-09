@@ -131,15 +131,21 @@ def analyse_url(url):
     )
 
     # ── 7. Subdomains ──
-    if not subdomain:
+    # www is a standard subdomain and should not be flagged
+    clean_subdomain = subdomain.replace('www', '').strip('.')
+
+    if not subdomain or subdomain == 'www':
         features['Having_Sub_Domain'] = 1
-        findings['Having_Sub_Domain'] = "🟢 No subdomains detected."
+        findings['Having_Sub_Domain'] = "🟢 No suspicious subdomains detected."
+    elif '.' not in clean_subdomain and clean_subdomain == '':
+        features['Having_Sub_Domain'] = 1
+        findings['Having_Sub_Domain'] = "🟢 Only standard www subdomain detected — normal."
     elif '.' not in subdomain:
         features['Having_Sub_Domain'] = 0
         findings['Having_Sub_Domain'] = f"🟡 One subdomain detected ({subdomain}) — slightly suspicious."
     else:
         features['Having_Sub_Domain'] = -1
-        findings['Having_Sub_Domain'] = f"🔴 Multiple subdomains detected ({subdomain}) — often used to fake legitimacy."
+        findings['Having_Sub_Domain'] = f"🔴 Multiple subdomains detected ({subdomain}) — often used to fake legitimacy e.g. login.verify.paypal.fakesite.com."
 
     # ── 8. SSL Certificate ──
     ssl_result = check_ssl(hostname) if hostname else -1
@@ -158,8 +164,12 @@ def analyse_url(url):
     findings['Domain_Reg_Length'] = (
         "🟢 Domain has been registered for over a year — sign of legitimacy."
         if age_result == 1 else
-        "🔴 Domain is less than a year old or registration couldn't be verified — phishing sites are often newly registered."
+        "🟡 Domain age could not be verified via WHOIS — this may be a network timeout rather than a red flag."
     )
+
+    # Also update the feature value to neutral if unverified
+    if age_result == -1:
+        features['Domain_Reg_Length'] = 0
 
     # ── 10. Redirects ──
     redirect_result = check_redirects(url)
