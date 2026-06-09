@@ -125,7 +125,7 @@ streamlit run app.py
 
 ## Future Improvements
 
-- Add live URL input using WHOIS and VirusTotal API for real-time checking
+- Add live URL input using WHOIS
 - Retrain with a larger, more recent phishing dataset
 - Add email header analysis as a second detection mode
 - Experiment with XGBoost and compare performance against Random Forest
