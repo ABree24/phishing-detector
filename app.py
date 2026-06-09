@@ -234,8 +234,10 @@ st.caption("Optionally cross-reference with 70+ antivirus engines.")
 vt_url = st.text_input(
     "Enter the website URL to scan with VirusTotal:",
     placeholder="https://example.com",
-    key="vt_url"
-    )
+    key="vt_url",
+    label_visibility="visible"
+)
+st.caption("👆 Type the URL above then click the Scan button below.")
 
 if st.button("🔎 Scan with VirusTotal"):
     if not vt_url:
