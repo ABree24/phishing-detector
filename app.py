@@ -175,9 +175,10 @@ if st.button("🔍 Analyse Website", use_container_width=True):
     full_input = ALL_FEATURE_DEFAULTS.copy()
     full_input.update(user_inputs)
     input_df = pd.DataFrame([full_input])
-
-    prediction = model.predict(input_df)[0]
-    probability = model.predict_proba(input_df)[0]
+# Convert to numpy array to bypass feature name validation
+    input_array = input_df.values
+    prediction = model.predict(input_array)[0]
+    probability = model.predict_proba(input_array)[0]
     phishing_prob = probability[1] * 100
     legit_prob = probability[0] * 100
 
