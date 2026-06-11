@@ -266,39 +266,21 @@ with tab1:
     st.markdown("Paste any URL and the app will automatically analyse it for phishing signals.")
     st.caption("⚠️ Never visit a suspicious URL directly — paste it here instead.")
 
-    # Use session state to trigger analysis so Enter key doesn't fire prematurely
-    if "auto_analyse_triggered" not in st.session_state:
-        st.session_state.auto_analyse_triggered = False
-    if "auto_url_value" not in st.session_state:
-        st.session_state.auto_url_value = ""
+    with st.form(key="auto_form", clear_on_submit=False):
+        auto_url = st.text_input(
+            "Paste URL to analyse:",
+            placeholder="https://example.com"
+        )
+        auto_submitted = st.form_submit_button("🚀 Auto Analyse", use_container_width=True)
 
-    auto_url = st.text_input(
-        "Paste URL to analyse:",
-        placeholder="https://example.com",
-        key="auto_url_input"
-    )
-
-    auto_btn = st.button("🚀 Auto Analyse", use_container_width=True, key="auto_btn")
-
-    # Only trigger on button click, not on Enter
-    if auto_btn:
-        st.session_state.auto_analyse_triggered = True
-        st.session_state.auto_url_value = auto_url
-
-    if st.session_state.auto_analyse_triggered and st.session_state.auto_url_value:
-        url_to_analyse = st.session_state.auto_url_value
-        if not url_to_analyse.strip():
+    if auto_submitted:
+        if not auto_url.strip():
             st.warning("Please enter a URL above.")
-            st.session_state.auto_analyse_triggered = False
-        elif not is_valid_url(url_to_analyse):
-            st.warning("⚠️ Please enter a valid URL (e.g., https://example.com)")
-            logger.warning(f"Invalid URL provided: {url_to_analyse[:50]}")
-            st.session_state.auto_analyse_triggered = False
         else:
             with st.spinner("Analysing URL... checking SSL, domain age, redirects — this takes about 10 seconds..."):
                 try:
                     from src.url_analyser import analyse_url
-                    auto_features, findings = analyse_url(url_to_analyse)
+                    auto_features, findings = analyse_url(auto_url)
                     prediction, phishing_prob = run_model(auto_features)
 
                     st.markdown("## Result")
@@ -315,16 +297,11 @@ with tab1:
                             st.success(explanation)
 
                 except TimeoutError as e:
-                    logger.error(f"Analysis timeout: {str(e)}")
-                    st.error("⏱️ Analysis timed out — the site may be slow or unreachable. Try again or use the Manual Checklist tab.")
-                except ValueError as e:
-                    logger.error(f"Validation error: {str(e)}")
-                    st.error(f"⚠️ Unable to analyze this URL. {str(e)}")
+                    st.error(f"⏱️ Analysis timed out: {str(e)}")
+                    st.caption("The site may be slow or unreachable. Try again or use the Manual Checklist tab.")
                 except Exception as e:
-                    logger.error(f"Analysis error: {str(e)}", exc_info=True)
-                    st.error("Unable to analyze URL. Please try again or use the Manual Checklist tab.")
-
-            st.session_state.auto_analyse_triggered = False
+                    st.error(f"Could not analyse URL: {str(e)}")
+                    st.caption("Make sure the URL starts with http:// or https://")
 
 # ══════════════════════════════════════
 # TAB 2 — Manual Checklist
