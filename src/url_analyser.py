@@ -15,7 +15,6 @@ URL_SHORTENERS = [
     'short.link', 'buff.ly', 'rebrand.ly', 'bl.ink', 'tiny.cc'
 ]
 
-# Common suspicious keywords used in phishing URLs or page content
 SUSPICIOUS_KEYWORDS = [
     'login', 'verify', 'secure', 'account', 'update',
     'confirm', 'bank', 'ebay', 'paypal', 'signin', 'security'
@@ -55,34 +54,47 @@ class HTMLFeatureParser(HTMLParser):
         self._in_title = False
 
     def handle_starttag(self, tag, attrs):
-        attrs = {name.lower(): value for name, value in attrs if value}
-        href = attrs.get('href', '').strip()
-        src = attrs.get('src', '').strip()
-        action = attrs.get('action', '').strip()
-        rel = attrs.get('rel', '').lower() if attrs.get('rel') else ''
+        attrs_dict = {name.lower(): (value or '') for name, value in attrs}
+        href = attrs_dict.get('href', '').strip()
+        src = attrs_dict.get('src', '').strip()
+        action = attrs_dict.get('action', '').strip()
+        rel = attrs_dict.get('rel', '').lower()
 
-        if 'onmouseover' in attrs:
+        if 'onmouseover' in attrs_dict:
             self.contains_onmouseover = True
-        if 'oncontextmenu' in attrs:
+        if 'oncontextmenu' in attrs_dict:
             self.contains_contextmenu = True
 
         if tag == 'title':
             self._in_title = True
 
-        if tag == 'a' and href:
-            self.anchor_hrefs.append(urljoin(self.base_url, href))
+        if tag == 'a' and href and not href.startswith('#'):
+            try:
+                self.anchor_hrefs.append(urljoin(self.base_url, href))
+            except Exception:
+                pass
 
-        if tag in ('img', 'script', 'iframe', 'embed', 'audio', 'video', 'source') and src:
-            self.resource_urls.append(urljoin(self.base_url, src))
+        if tag in ('img', 'script', 'embed', 'audio', 'video', 'source') and src:
+            try:
+                self.resource_urls.append(urljoin(self.base_url, src))
+            except Exception:
+                pass
 
         if tag == 'link' and href:
-            self.resource_urls.append(urljoin(self.base_url, href))
-            if 'icon' in rel:
-                self.favicon_urls.append(urljoin(self.base_url, href))
+            try:
+                full_url = urljoin(self.base_url, href)
+                self.resource_urls.append(full_url)
+                if 'icon' in rel:
+                    self.favicon_urls.append(full_url)
+            except Exception:
+                pass
 
         if tag == 'form':
             if action:
-                self.form_actions.append(urljoin(self.base_url, action))
+                try:
+                    self.form_actions.append(urljoin(self.base_url, action))
+                except Exception:
+                    self.form_actions.append(action)
             else:
                 self.form_actions.append('')
 
@@ -96,27 +108,12 @@ class HTMLFeatureParser(HTMLParser):
     def handle_data(self, data):
         if self._in_title:
             self.title += data
-
         lowered = data.lower()
         if 'window.open' in lowered or 'alert(' in lowered or 'prompt(' in lowered:
             self.suspicious_js = True
 
     def handle_startendtag(self, tag, attrs):
         self.handle_starttag(tag, attrs)
-
-    def handle_comment(self, data):
-        lowered = data.lower()
-        if 'window.open' in lowered or 'alert(' in lowered or 'prompt(' in lowered:
-            self.suspicious_js = True
-
-    def handle_decl(self, decl):
-        pass
-
-    def handle_pi(self, data):
-        pass
-
-    def unknown_decl(self, data):
-        pass
 
 
 def safe_fetch_html(url):
@@ -128,7 +125,7 @@ def safe_fetch_html(url):
             allow_redirects=True
         )
         if response.status_code == 200:
-            return response.text[:100000]  # Limit to first 100KB
+            return response.text[:100000]
     except Exception:
         pass
     return ''
@@ -136,8 +133,11 @@ def safe_fetch_html(url):
 
 def get_page_features(html, base_url, base_domain):
     parser = HTMLFeatureParser(base_url, base_domain)
-    parser.feed(html)
-    parser.close()
+    try:
+        parser.feed(html)
+        parser.close()
+    except Exception:
+        pass
 
     def external_ratio(urls):
         total = 0
@@ -171,6 +171,7 @@ def get_page_features(html, base_url, base_domain):
         'Page_Title': parser.title.strip(),
     }
 
+    # Anchor links
     if anchor_ratio is None:
         results['URL_of_Anchor'] = 0
     elif anchor_ratio <= 0.3:
@@ -180,6 +181,7 @@ def get_page_features(html, base_url, base_domain):
     else:
         results['URL_of_Anchor'] = -1
 
+    # External resources
     if resource_ratio is None:
         results['Request_URL'] = 0
         results['Links_in_Tags'] = 0
@@ -193,19 +195,21 @@ def get_page_features(html, base_url, base_domain):
         results['Request_URL'] = -1
         results['Links_in_Tags'] = -1
 
+    # Favicon
     if parser.favicon_urls:
         favicon_url = parser.favicon_urls[0]
         results['Favicon'] = -1 if not is_same_domain(favicon_url, base_domain) else 1
     else:
         results['Favicon'] = 0
 
+    # Form actions
     if parser.form_actions:
-        if any(action.startswith('mailto:') for action in parser.form_actions):
+        if any(a.startswith('mailto:') for a in parser.form_actions):
             results['Submitting_to_Email'] = -1
-        if any(action == '' or action == '#' or action.lower().startswith('javascript:')
-               for action in parser.form_actions):
+        if any(a == '' or a == '#' or a.lower().startswith('javascript:')
+               for a in parser.form_actions):
             results['SFH'] = 0
-        elif any(not is_same_domain(action, base_domain) for action in parser.form_actions):
+        elif any(not is_same_domain(a, base_domain) for a in parser.form_actions if a):
             results['SFH'] = -1
         else:
             results['SFH'] = 1
@@ -213,12 +217,10 @@ def get_page_features(html, base_url, base_domain):
         results['SFH'] = 1
         results['Submitting_to_Email'] = 1
 
+    # Page title
     if parser.title:
         title_lower = parser.title.strip().lower()
-        if base_domain and base_domain not in title_lower:
-            results['Abnormal_URL'] = -1
-        else:
-            results['Abnormal_URL'] = 1
+        results['Abnormal_URL'] = 1 if base_domain and base_domain.lower() in title_lower else -1
     else:
         results['Abnormal_URL'] = 0
 
@@ -231,18 +233,14 @@ def get_page_features(html, base_url, base_domain):
 
 
 def check_ssl(hostname):
-    """Check if site has a valid trusted SSL certificate."""
     if not hostname:
         return -1
-
     try:
         context = ssl.create_default_context()
         with socket.create_connection((hostname, 443), timeout=5) as sock:
             with context.wrap_socket(sock, server_hostname=hostname) as ssock:
                 cert = ssock.getpeercert()
-                if cert:
-                    return 1
-        return 0
+                return 1 if cert else 0
     except ssl.SSLCertVerificationError:
         return 0
     except Exception:
@@ -250,9 +248,8 @@ def check_ssl(hostname):
 
 
 def get_domain_age_days(domain):
-    """Get domain age with timeout protection."""
     result = [None]
-    
+
     def fetch_whois():
         try:
             record = whois.whois(domain)
@@ -263,16 +260,14 @@ def get_domain_age_days(domain):
                 result[0] = (datetime.now() - creation).days
         except Exception:
             pass
-    
+
     thread = threading.Thread(target=fetch_whois, daemon=True)
     thread.start()
-    thread.join(timeout=4)  # 4 second timeout
-    
+    thread.join(timeout=4)
     return result[0]
 
 
 def check_redirects(url):
-    """Count how many redirects the URL goes through."""
     try:
         response = requests.get(
             url,
@@ -280,42 +275,46 @@ def check_redirects(url):
             timeout=5,
             headers={'User-Agent': 'Mozilla/5.0'}
         )
-        redirect_count = len(response.history)
-        return 0 if redirect_count <= 1 else 1
+        return 0 if len(response.history) <= 1 else 1
     except Exception:
         return 0
+
+
+def check_dns_record(hostname):
+    try:
+        socket.gethostbyname(hostname)
+        return True
+    except Exception:
+        return False
 
 
 def analyse_url(url):
     """
     Automatically extract all model features from a URL with timeout protection.
-    Returns a dict of feature values and a dict of human-readable explanations.
+    Returns (features dict, findings dict).
     """
     result = [None, None]
     error = [None]
-    
+
     def do_analysis():
         try:
             result[0], result[1] = _analyse_url_impl(url)
         except Exception as e:
             error[0] = str(e)
-    
+
     thread = threading.Thread(target=do_analysis, daemon=True)
     thread.start()
-    thread.join(timeout=12)  # 12 second total timeout
-    
+    thread.join(timeout=15)
+
     if error[0]:
         raise ValueError(error[0])
     if result[0] is None:
-        raise TimeoutError("URL analysis took too long and was cancelled")
-    
+        raise TimeoutError("URL analysis took too long — try again or check the URL.")
+
     return result[0], result[1]
 
 
 def _analyse_url_impl(url):
-    """
-    Internal implementation of URL analysis (called with timeout wrapper).
-    """
     url = normalize_url(url)
     parsed = urlparse(url)
     hostname = parsed.hostname or ''
@@ -326,13 +325,12 @@ def _analyse_url_impl(url):
     domain = ext.domain or ''
     registered_domain = ext.registered_domain or hostname
     scheme = parsed.scheme.lower()
-    base_url = f"{scheme}://{hostname}"
 
     findings = {}
     features = {}
 
-    # 1. IP Address in URL
-    has_ip = bool(re.match(r'\d+\.\d+\.\d+\.\d+', hostname))
+    # ── 1. IP Address ──
+    has_ip = bool(re.match(r'^\d+\.\d+\.\d+\.\d+$', hostname))
     features['Having_IP_Address'] = -1 if has_ip else 1
     findings['Having_IP_Address'] = (
         f"🔴 URL uses a raw IP address ({hostname}) instead of a domain name — strong phishing signal."
@@ -340,7 +338,7 @@ def _analyse_url_impl(url):
         f"🟢 URL uses a proper domain name ({hostname})."
     )
 
-    # 2. URL Length
+    # ── 2. URL Length ──
     url_len = len(url)
     if url_len < 54:
         features['URL_Length'] = 1
@@ -352,8 +350,8 @@ def _analyse_url_impl(url):
         features['URL_Length'] = -1
         findings['URL_Length'] = f"🔴 URL is very long ({url_len} chars) — phishing URLs are often padded to hide the real domain."
 
-    # 3. URL Shortener
-    is_shortened = any(short in hostname.lower() for short in URL_SHORTENERS)
+    # ── 3. URL Shortener ──
+    is_shortened = any(s in hostname.lower() for s in URL_SHORTENERS)
     features['Shortining_Service'] = -1 if is_shortened else 1
     findings['Shortining_Service'] = (
         f"🔴 Uses a URL shortener ({hostname}) — hides the real destination."
@@ -361,7 +359,7 @@ def _analyse_url_impl(url):
         "🟢 Not using a URL shortener."
     )
 
-    # 4. @ Symbol
+    # ── 4. @ Symbol ──
     has_at = '@' in url
     features['Having_At_Symbol'] = -1 if has_at else 1
     findings['Having_At_Symbol'] = (
@@ -370,7 +368,7 @@ def _analyse_url_impl(url):
         "🟢 No @ symbol in URL."
     )
 
-    # 5. Double Slash Redirect
+    # ── 5. Double Slash ──
     has_double_slash = '//' in parsed.path
     features['Double_Slash_Redirect'] = -1 if has_double_slash else 1
     findings['Double_Slash_Redirect'] = (
@@ -379,7 +377,7 @@ def _analyse_url_impl(url):
         "🟢 No double slash redirect detected."
     )
 
-    # 6. Hyphen in Domain
+    # ── 6. Hyphen in Domain ──
     has_hyphen = '-' in domain
     features['Prefix_Suffix'] = -1 if has_hyphen else 1
     findings['Prefix_Suffix'] = (
@@ -388,8 +386,8 @@ def _analyse_url_impl(url):
         f"🟢 Domain '{domain}' has no hyphen."
     )
 
-    # 7. Subdomains
-    subdomain_parts = [part for part in (ext.subdomain or '').split('.') if part and part != 'www']
+    # ── 7. Subdomains ──
+    subdomain_parts = [p for p in (ext.subdomain or '').split('.') if p and p != 'www']
     if not subdomain_parts:
         features['Having_Sub_Domain'] = 1
         findings['Having_Sub_Domain'] = "🟢 No suspicious subdomains detected."
@@ -400,152 +398,163 @@ def _analyse_url_impl(url):
         features['Having_Sub_Domain'] = -1
         findings['Having_Sub_Domain'] = f"🔴 Multiple subdomains detected ({'.'.join(subdomain_parts)}) — often used to fake legitimacy."
 
-    # 8. SSL Certificate
+    # ── 8. SSL Certificate ──
     ssl_result = check_ssl(hostname) if scheme == 'https' else -1
     features['SSLfinal_State'] = ssl_result
-    if ssl_result == 1:
-        findings['SSLfinal_State'] = "🟢 Valid trusted SSL certificate found."
-    elif ssl_result == 0:
-        findings['SSLfinal_State'] = "🟡 SSL certificate exists but is untrusted or self-signed."
-    else:
-        findings['SSLfinal_State'] = "🔴 No valid HTTPS — site has no SSL certificate or connection failed."
+    findings['SSLfinal_State'] = (
+        "🟢 Valid trusted SSL certificate found." if ssl_result == 1 else
+        "🟡 SSL certificate exists but is untrusted or self-signed." if ssl_result == 0 else
+        "🔴 No valid HTTPS — site has no SSL certificate or connection failed."
+    )
 
-    # 9. Domain Registration Length
+    # ── 9. Domain Age ──
     age_days = get_domain_age_days(registered_domain) if registered_domain else None
     if age_days is None:
         features['Domain_Reg_Length'] = 0
-        findings['Domain_Reg_Length'] = "🟡 Domain age could not be verified via WHOIS — may be due to privacy or network issues."
+        findings['Domain_Reg_Length'] = "🟡 Domain age could not be verified via WHOIS — may be due to privacy settings or network issues."
+    elif age_days > 365:
+        features['Domain_Reg_Length'] = 1
+        findings['Domain_Reg_Length'] = f"🟢 Domain has been registered for over a year ({age_days} days) — sign of legitimacy."
     else:
-        features['Domain_Reg_Length'] = 1 if age_days > 365 else -1
-        findings['Domain_Reg_Length'] = (
-            "🟢 Domain has been registered for over a year — sign of legitimacy."
-            if age_days > 365 else
-            "🔴 Domain registration is recent — phishing domains are often newly created."
-        )
+        features['Domain_Reg_Length'] = -1
+        findings['Domain_Reg_Length'] = f"🔴 Domain registration is recent ({age_days} days) — phishing domains are often newly created."
 
-    # 10. Redirects
+    # ── 10. Redirects ──
     redirect_result = check_redirects(url)
     features['Redirect'] = redirect_result
     findings['Redirect'] = (
-        "🟢 Few or no redirects detected."
-        if redirect_result == 0 else
+        "🟢 Few or no redirects detected." if redirect_result == 0 else
         "🔴 Multiple redirects detected — used to obscure the final destination."
     )
 
-    # Additional page-based features
+    # ── 11-23. Page-based features ──
     html = safe_fetch_html(url)
-    page_features = get_page_features(html, url, registered_domain)
-    features.update({
-        'Favicon': page_features['Favicon'],
-        'Port': -1 if parsed.port and parsed.port not in (80, 443) else 1,
-        'HTTPS_Token': -1 if 'https' in (parsed.hostname or '').lower() else 1,
-        'Request_URL': page_features['Request_URL'],
-        'URL_of_Anchor': page_features['URL_of_Anchor'],
-        'Links_in_Tags': page_features['Links_in_Tags'],
-        'SFH': page_features['SFH'],
-        'Submitting_to_Email': page_features['Submitting_to_Email'],
-        'Abnormal_URL': page_features['Abnormal_URL'],
-        'On_Mouseover': page_features['On_Mouseover'],
-        'RightClick': page_features['RightClick'],
-        'PopUpWindow': page_features['PopUpWindow'],
-        'Iframe': page_features['Iframe'],
-    })
+    page = get_page_features(html, url, registered_domain)
 
+    # Favicon
+    features['Favicon'] = page['Favicon']
     findings['Favicon'] = (
-        "🟢 Favicon is hosted on the same domain."
-        if features['Favicon'] == 1 else
-        "🟡 No favicon was detected." if features['Favicon'] == 0 else
+        "🟢 Favicon is hosted on the same domain." if page['Favicon'] == 1 else
+        "🟡 No favicon was detected." if page['Favicon'] == 0 else
         "🔴 Favicon comes from a different domain — may be trying to appear legitimate."
     )
+
+    # Port
+    features['Port'] = -1 if (parsed.port and parsed.port not in (80, 443)) else 1
     findings['Port'] = (
-        f"🟡 URL uses non-standard port {parsed.port}." if parsed.port and parsed.port not in (80, 443)
-        else "🟢 URL uses a standard port."
+        f"🟡 URL uses non-standard port {parsed.port} — suspicious."
+        if features['Port'] == -1 else
+        "🟢 URL uses a standard port."
     )
+
+    # HTTPS token in domain name
+    features['HTTPS_Token'] = -1 if 'https' in hostname.lower() else 1
     findings['HTTPS_Token'] = (
-        "🔴 The hostname contains 'https' in the domain, which is often a phishing trick."
+        "🔴 The hostname contains 'https' in the domain name — a common phishing trick."
         if features['HTTPS_Token'] == -1 else
         "🟢 No misleading HTTPS token found in the hostname."
     )
+
+    # Request URL
+    features['Request_URL'] = page['Request_URL']
     findings['Request_URL'] = (
-        "🟢 Most page resources load from the same domain."
-        if features['Request_URL'] == 1 else
-        "🟡 Some resources load from external domains."
-        if features['Request_URL'] == 0 else
+        "🟢 Most page resources load from the same domain." if page['Request_URL'] == 1 else
+        "🟡 Some resources load from external domains." if page['Request_URL'] == 0 else
         "🔴 Most resources load from other domains — suspicious."
     )
+
+    # Anchor links
+    features['URL_of_Anchor'] = page['URL_of_Anchor']
     findings['URL_of_Anchor'] = (
-        "🟢 Most links point to the same domain."
-        if features['URL_of_Anchor'] == 1 else
-        "🟡 Many links are external."
-        if features['URL_of_Anchor'] == 0 else
+        "🟢 Most links point to the same domain." if page['URL_of_Anchor'] == 1 else
+        "🟡 Many links are external." if page['URL_of_Anchor'] == 0 else
         "🔴 Most links point to external domains — common phishing behavior."
     )
+
+    # Links in tags
+    features['Links_in_Tags'] = page['Links_in_Tags']
     findings['Links_in_Tags'] = (
-        "🟢 Tag resources load from the same origin."
-        if features['Links_in_Tags'] == 1 else
-        "🟡 Tag resources are mixed internal and external."
-        if features['Links_in_Tags'] == 0 else
+        "🟢 Tag resources load from the same origin." if page['Links_in_Tags'] == 1 else
+        "🟡 Tag resources are mixed internal and external." if page['Links_in_Tags'] == 0 else
         "🔴 Tag resources come largely from external domains."
     )
+
+    # SFH
+    features['SFH'] = page['SFH']
     findings['SFH'] = (
-        "🟢 Form submission target is on the same domain."
-        if features['SFH'] == 1 else
-        "🟡 Form handler is blank or javascript-based."
-        if features['SFH'] == 0 else
-        "🔴 Form submits to an external domain."
+        "🟢 Form submission target is on the same domain." if page['SFH'] == 1 else
+        "🟡 Form handler is blank or javascript-based." if page['SFH'] == 0 else
+        "🔴 Form submits data to an external domain — strong phishing signal."
     )
+
+    # Submitting to email
+    features['Submitting_to_Email'] = page['Submitting_to_Email']
     findings['Submitting_to_Email'] = (
-        "🟢 Form submission is normal."
-        if features['Submitting_to_Email'] == 1 else
-        "🔴 Form submission uses email (mailto:) — suspicious."
+        "🟢 Form submission is normal." if page['Submitting_to_Email'] == 1 else
+        "🔴 Form uses mailto: submission — suspicious."
     )
+
+    # Abnormal URL
+    features['Abnormal_URL'] = page['Abnormal_URL']
     findings['Abnormal_URL'] = (
-        "🟢 Page title matches the domain."
-        if features['Abnormal_URL'] == 1 else
-        "🟡 Page title is unavailable."
-        if features['Abnormal_URL'] == 0 else
+        "🟢 Page title matches the domain." if page['Abnormal_URL'] == 1 else
+        "🟡 Page title is unavailable." if page['Abnormal_URL'] == 0 else
         "🔴 Page title does not mention the domain — may be an abnormal URL."
     )
+
+    # On mouseover
+    features['On_Mouseover'] = page['On_Mouseover']
     findings['On_Mouseover'] = (
         "🔴 The page uses onmouseover scripts — a common phishing tactic."
-        if features['On_Mouseover'] == -1 else
+        if page['On_Mouseover'] == -1 else
         "🟢 No dangerous onmouseover behavior detected."
     )
+
+    # Right click
+    features['RightClick'] = page['RightClick']
     findings['RightClick'] = (
-        "🔴 Right-click is disabled or blocked."
-        if features['RightClick'] == -1 else
+        "🔴 Right-click is disabled — phishing sites do this to prevent inspection."
+        if page['RightClick'] == -1 else
         "🟢 Right-click appears enabled."
     )
+
+    # Popup
+    features['PopUpWindow'] = page['PopUpWindow']
     findings['PopUpWindow'] = (
-        "🔴 The page uses pop-up or alert scripting."
-        if features['PopUpWindow'] == -1 else
+        "🔴 The page uses pop-up or alert scripting — suspicious."
+        if page['PopUpWindow'] == -1 else
         "🟢 No pop-up scripting detected."
     )
+
+    # iFrame
+    features['Iframe'] = page['Iframe']
     findings['Iframe'] = (
-        "🔴 The page contains iframes."
-        if features['Iframe'] == -1 else
+        "🔴 The page contains iframes — can be used to embed malicious content."
+        if page['Iframe'] == -1 else
         "🟢 No iframes detected."
     )
 
-    # 11-30 fallback values for infos not automatically extracted
-    features.setdefault('Age_of_Domain', 1 if age_days and age_days > 180 else 0)
-    features.setdefault('DNS_Record', 1 if check_dns_record(hostname) else -1)
-    features.setdefault('Web_Traffic', 1)
-    features.setdefault('Page_Rank', 1)
-    features.setdefault('Google_Index', 1)
-    features.setdefault('Links_Pointing_to_Page', 1)
-    if any(keyword in url.lower() for keyword in SUSPICIOUS_KEYWORDS) or any(
-            keyword in page_features['Page_Title'].lower() for keyword in SUSPICIOUS_KEYWORDS):
-        features.setdefault('Statistical_Report', -1)
-    else:
-        features.setdefault('Statistical_Report', 1)
+    # ── 24-30. Remaining features ──
+    features['Age_of_Domain'] = (
+        1 if age_days and age_days > 180 else
+        -1 if age_days is not None else 0
+    )
+
+    features['DNS_Record'] = 1 if check_dns_record(hostname) else -1
+
+    # Web traffic, page rank, google index — not automatically detectable,
+    # default to neutral (1) so they don't skew the model
+    features['Web_Traffic'] = 1
+    features['Page_Rank'] = 1
+    features['Google_Index'] = 1
+    features['Links_Pointing_to_Page'] = 1
+
+    # Statistical report — flag if URL or page title contains suspicious keywords
+    page_title = page.get('Page_Title', '').lower()
+    has_suspicious = (
+        any(kw in url.lower() for kw in SUSPICIOUS_KEYWORDS) or
+        any(kw in page_title for kw in SUSPICIOUS_KEYWORDS)
+    )
+    features['Statistical_Report'] = -1 if has_suspicious else 1
 
     return features, findings
-
-
-def check_dns_record(hostname):
-    try:
-        socket.gethostbyname(hostname)
-        return True
-    except Exception:
-        return False

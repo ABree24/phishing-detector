@@ -117,9 +117,15 @@ TOP_FEATURES = {
     },
 }
 
-# ── Helper functions ──
+# ── Load model ──
+@st.cache_resource
+def load_model():
+    return joblib.load('models/phishing_model.pkl')
+
+model = load_model()
+
+# ── Helper: run model prediction ──
 def run_model(feature_dict):
-    """Takes a feature dict, orders columns correctly, runs model, returns prediction and probability."""
     full_input = ALL_FEATURE_DEFAULTS.copy()
     full_input.update(feature_dict)
     input_df = pd.DataFrame([full_input])[CORRECT_ORDER]
@@ -129,8 +135,8 @@ def run_model(feature_dict):
     phishing_prob = probability[1] * 100
     return prediction, phishing_prob
 
+# ── Helper: show result banner and gauge ──
 def show_result(prediction, phishing_prob):
-    """Display the result banner and gauge chart."""
     res_col1, res_col2 = st.columns([1, 1])
     with res_col1:
         if prediction == 1:
@@ -157,73 +163,81 @@ def show_result(prediction, phishing_prob):
         fig.update_layout(height=250, margin=dict(t=40, b=0, l=20, r=20))
         st.plotly_chart(fig, use_container_width=True)
 
+# ── Helper: VirusTotal scan ──
 def check_virustotal(url):
-    """Submit a URL to VirusTotal and return the scan results."""
     headers = {"x-apikey": VIRUSTOTAL_API_KEY}
     try:
-        submit_response = requests.post(
+        submit = requests.post(
             "https://www.virustotal.com/api/v3/urls",
             headers=headers,
             data={"url": url},
             timeout=10
         )
-        if submit_response.status_code != 200:
+        if submit.status_code != 200:
             return None, "Could not submit URL to VirusTotal."
-        analysis_id = submit_response.json()["data"]["id"]
+        analysis_id = submit.json()["data"]["id"]
         time.sleep(3)
-        result_response = requests.get(
+        result = requests.get(
             f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
             headers=headers,
             timeout=10
         )
-        if result_response.status_code != 200:
+        if result.status_code != 200:
             return None, "Could not retrieve VirusTotal results."
-        stats = result_response.json()["data"]["attributes"]["stats"]
-        return stats, None
+        return result.json()["data"]["attributes"]["stats"], None
     except requests.exceptions.Timeout:
         return None, "VirusTotal request timed out."
     except Exception as e:
         return None, f"VirusTotal error: {str(e)}"
 
-# ── Load model ──
-@st.cache_resource
-def load_model():
-    return joblib.load('models/phishing_model.pkl')
-
-model = load_model()
-
-# ── Header ──
+# ══════════════════════════════════════
+# HEADER
+# ══════════════════════════════════════
 st.image("assets/phishing.png", width=100)
 st.markdown("# Phishing Website Detector")
 st.markdown("Two ways to check a website — auto analyse a URL or answer manually.")
 st.markdown("---")
 
-# ── Tabs ──
+# ══════════════════════════════════════
+# TABS
+# ══════════════════════════════════════
 tab1, tab2 = st.tabs(["🔗 Auto URL Analyser", "📋 Manual Checklist"])
 
-# ════════════════════════════════════════
+# ══════════════════════════════════════
 # TAB 1 — Auto URL Analyser
-# ════════════════════════════════════════
+# ══════════════════════════════════════
 with tab1:
     st.subheader("🔗 Auto URL Analyser")
     st.markdown("Paste any URL and the app will automatically analyse it for phishing signals.")
     st.caption("⚠️ Never visit a suspicious URL directly — paste it here instead.")
 
+    # Use session state to trigger analysis so Enter key doesn't fire prematurely
+    if "auto_analyse_triggered" not in st.session_state:
+        st.session_state.auto_analyse_triggered = False
+
     auto_url = st.text_input(
         "Paste URL to analyse:",
         placeholder="https://example.com",
-        key="auto_url"
+        key="auto_url_input"
     )
 
-    if st.button("🚀 Auto Analyse", use_container_width=True):
-        if not auto_url:
+    auto_btn = st.button("🚀 Auto Analyse", use_container_width=True, key="auto_btn")
+
+    # Only trigger on button click, not on Enter
+    if auto_btn:
+        st.session_state.auto_analyse_triggered = True
+        st.session_state.auto_url_value = auto_url
+
+    if st.session_state.auto_analyse_triggered and st.session_state.get("auto_url_value"):
+        url_to_analyse = st.session_state.auto_url_value
+        if not url_to_analyse.strip():
             st.warning("Please enter a URL above.")
+            st.session_state.auto_analyse_triggered = False
         else:
-            with st.spinner("Analysing URL... checking SSL, domain age, redirects..."):
+            with st.spinner("Analysing URL... checking SSL, domain age, redirects — this takes about 10 seconds..."):
                 try:
                     from src.url_analyser import analyse_url
-                    auto_features, findings = analyse_url(auto_url)
-
+                    auto_features, findings = analyse_url(url_to_analyse)
                     prediction, phishing_prob = run_model(auto_features)
 
                     st.markdown("## Result")
@@ -231,7 +245,7 @@ with tab1:
 
                     st.markdown("### 🔍 What We Found")
                     st.caption("Here is what the automatic analysis detected about this URL:")
-                    for feature_key, explanation in findings.items():
+                    for key, explanation in findings.items():
                         if explanation.startswith("🔴"):
                             st.error(explanation)
                         elif explanation.startswith("🟡"):
@@ -239,13 +253,18 @@ with tab1:
                         else:
                             st.success(explanation)
 
+                except TimeoutError as e:
+                    st.error(f"⏱️ Analysis timed out: {str(e)}")
+                    st.caption("The site may be slow or unreachable. Try again or use the Manual Checklist tab.")
                 except Exception as e:
                     st.error(f"Could not analyse URL: {str(e)}")
                     st.caption("Make sure the URL starts with http:// or https://")
 
-# ════════════════════════════════════════
+            st.session_state.auto_analyse_triggered = False
+
+# ══════════════════════════════════════
 # TAB 2 — Manual Checklist
-# ════════════════════════════════════════
+# ══════════════════════════════════════
 with tab2:
     st.subheader("📋 Manual Website Characteristics")
     st.caption("Answer each question based on what you observe about the website.")
@@ -256,23 +275,22 @@ with tab2:
             label=meta['label'],
             options=list(meta['options'].keys()),
             help=meta['help'],
-            key=feature_key
+            key=f"manual_{feature_key}"
         )
         user_inputs[feature_key] = meta['options'][choice]
 
     st.markdown("---")
 
-    if st.button("🔍 Analyse Website", use_container_width=True):
+    if st.button("🔍 Analyse Website", use_container_width=True, key="manual_btn"):
         prediction, phishing_prob = run_model(user_inputs)
 
         st.markdown("## Result")
         show_result(prediction, phishing_prob)
 
         st.markdown("### 🚩 Red Flags Detected")
-        red_flags = [TOP_FEATURES[k]['label'].split('. ')[1]
-                     for k, v in user_inputs.items() if v == -1]
-        yellow_flags = [TOP_FEATURES[k]['label'].split('. ')[1]
-                        for k, v in user_inputs.items() if v == 0]
+        red_flags   = [TOP_FEATURES[k]['label'].split('. ')[1] for k, v in user_inputs.items() if v == -1]
+        yellow_flags = [TOP_FEATURES[k]['label'].split('. ')[1] for k, v in user_inputs.items() if v == 0]
+
         if red_flags:
             for label in red_flags:
                 st.error(f"🔴 {label}")
@@ -282,28 +300,40 @@ with tab2:
         if not red_flags and not yellow_flags:
             st.success("🟢 No red flags detected across all 10 checks.")
 
-# ════════════════════════════════════════
-# VIRUSTOTAL — Outside tabs, always visible
-# ════════════════════════════════════════
+# ══════════════════════════════════════
+# VIRUSTOTAL — Always visible below tabs
+# ══════════════════════════════════════
 st.markdown("---")
 st.markdown("### 🦠 VirusTotal Cross-Check")
 st.caption("Optionally cross-reference with 70+ antivirus engines.")
 
-vt_url = st.text_input(
-    "Enter the website URL to scan with VirusTotal:",
-    placeholder="https://example.com",
-    key="vt_url"
-)
-st.caption("👆 Type the URL above then click the Scan button below.")
+if "vt_triggered" not in st.session_state:
+    st.session_state.vt_triggered = False
 
-if st.button("🔎 Scan with VirusTotal"):
-    if not vt_url:
+vt_url = st.text_input(
+    "Enter the website URL to scan:",
+    placeholder="https://example.com",
+    key="vt_url_input"
+)
+
+vt_btn = st.button("🔎 Scan with VirusTotal", key="vt_btn")
+
+# Only trigger on button click, not on Enter
+if vt_btn:
+    st.session_state.vt_triggered = True
+    st.session_state.vt_url_value = vt_url
+
+if st.session_state.vt_triggered and st.session_state.get("vt_url_value"):
+    url_to_scan = st.session_state.vt_url_value
+    if not url_to_scan.strip():
         st.warning("Please enter a URL above to scan.")
+        st.session_state.vt_triggered = False
     elif not VIRUSTOTAL_API_KEY:
-        st.error("VirusTotal API key not found. Check your .env file.")
+        st.error("VirusTotal API key not found. Check your Streamlit secrets or .env file.")
+        st.session_state.vt_triggered = False
     else:
         with st.spinner("Submitting to VirusTotal... this takes about 5 seconds"):
-            stats, error = check_virustotal(vt_url)
+            stats, error = check_virustotal(url_to_scan)
 
         if error:
             st.error(f"Error: {error}")
@@ -322,11 +352,13 @@ if st.button("🔎 Scan with VirusTotal"):
                 st.success(f"✅ CLEAN — 0 out of {total} engines flagged this URL.")
 
             vt_col1, vt_col2, vt_col3, vt_col4 = st.columns(4)
-            vt_col1.metric("🔴 Malicious", malicious)
+            vt_col1.metric("🔴 Malicious",  malicious)
             vt_col2.metric("🟡 Suspicious", suspicious)
-            vt_col3.metric("🟢 Harmless", harmless)
+            vt_col3.metric("🟢 Harmless",   harmless)
             vt_col4.metric("⚪ Undetected", undetected)
             st.caption(f"Scanned by {total} antivirus engines via VirusTotal API.")
+
+        st.session_state.vt_triggered = False
 
 # ── Footer ──
 st.markdown("---")
