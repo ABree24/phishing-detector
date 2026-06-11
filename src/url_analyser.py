@@ -8,6 +8,9 @@ from urllib.parse import urlparse, urljoin
 from datetime import datetime
 from html.parser import HTMLParser
 import threading
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Known URL shortener domains
 URL_SHORTENERS = [
@@ -117,27 +120,50 @@ class HTMLFeatureParser(HTMLParser):
 
 
 def safe_fetch_html(url):
+    """Fetch HTML from URL with error logging.
+    
+    Returns:
+        HTML content (truncated to 100KB) or empty string on failure
+    """
     try:
         response = requests.get(
             url,
             timeout=5,
             headers={'User-Agent': 'Mozilla/5.0'},
-            allow_redirects=True
+            allow_redirects=True,
+            verify=True
         )
         if response.status_code == 200:
             return response.text[:100000]
-    except Exception:
-        pass
+        else:
+            logger.warning(f"Failed to fetch {url}: HTTP {response.status_code}")
+    except requests.exceptions.Timeout:
+        logger.warning(f"Timeout fetching HTML from {url}")
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Request error fetching {url}: {str(e)}")
+    except Exception as e:
+        logger.warning(f"Unexpected error fetching HTML from {url}: {str(e)}")
     return ''
 
 
 def get_page_features(html, base_url, base_domain):
+    """Extract features from HTML content with proper error handling.
+    
+    Args:
+        html: HTML content string
+        base_url: Base URL for resolving relative URLs
+        base_domain: Registered domain for same-domain checks
+        
+    Returns:
+        Dictionary of extracted features
+    """
     parser = HTMLFeatureParser(base_url, base_domain)
     try:
         parser.feed(html)
         parser.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error parsing HTML from {base_url}: {str(e)}")
+        # Parser state may be incomplete, but continue with partial results
 
     def external_ratio(urls):
         total = 0
@@ -247,8 +273,17 @@ def check_ssl(hostname):
         return -1
 
 
-def get_domain_age_days(domain):
+def get_domain_age_days(domain: str):
+    """Get domain registration age in days.
+    
+    Args:
+        domain: Domain name to check
+        
+    Returns:
+        Age in days, or None if lookup fails
+    """
     result = [None]
+    error_info = [None]
 
     def fetch_whois():
         try:
@@ -258,33 +293,78 @@ def get_domain_age_days(domain):
                 creation = creation[0]
             if isinstance(creation, datetime):
                 result[0] = (datetime.now() - creation).days
-        except Exception:
-            pass
+                logger.info(f"Domain {domain} age: {result[0]} days")
+            else:
+                logger.warning(f"Unexpected creation_date type for {domain}: {type(creation)}")
+        except socket.timeout:
+            logger.warning(f"WHOIS timeout for {domain}")
+            error_info[0] = "timeout"
+        except socket.gaierror as e:
+            logger.warning(f"DNS error during WHOIS lookup for {domain}: {str(e)}")
+            error_info[0] = "dns_error"
+        except Exception as e:
+            logger.warning(f"WHOIS lookup failed for {domain}: {str(e)}")
+            error_info[0] = str(e)
 
     thread = threading.Thread(target=fetch_whois, daemon=True)
     thread.start()
     thread.join(timeout=4)
+    
+    if error_info[0] and result[0] is None:
+        logger.info(f"Failed to get domain age for {domain}: {error_info[0]}")
+    
     return result[0]
 
 
-def check_redirects(url):
+def check_redirects(url: str) -> int:
+    """Check if URL has suspicious redirects.
+    
+    Args:
+        url: URL to check
+        
+    Returns:
+        0 if normal/few redirects, 1 if many redirects, 0 on error
+    """
     try:
         response = requests.get(
             url,
             allow_redirects=True,
             timeout=5,
-            headers={'User-Agent': 'Mozilla/5.0'}
+            headers={'User-Agent': 'Mozilla/5.0'},
+            verify=True
         )
-        return 0 if len(response.history) <= 1 else 1
-    except Exception:
+        redirect_count = len(response.history)
+        logger.info(f"URL {url[:50]} has {redirect_count} redirects")
+        return 0 if redirect_count <= 1 else 1
+    except requests.exceptions.Timeout:
+        logger.warning(f"Redirect check timeout for {url}")
+        return 0
+    except requests.exceptions.RequestException as e:
+        logger.warning(f"Request error checking redirects for {url}: {str(e)}")
+        return 0
+    except Exception as e:
+        logger.warning(f"Unexpected error checking redirects for {url}: {str(e)}")
         return 0
 
 
-def check_dns_record(hostname):
+def check_dns_record(hostname: str) -> bool:
+    """Check if DNS record exists for hostname.
+    
+    Args:
+        hostname: Hostname to check
+        
+    Returns:
+        True if DNS record found, False otherwise
+    """
     try:
         socket.gethostbyname(hostname)
+        logger.info(f"DNS record found for {hostname}")
         return True
-    except Exception:
+    except socket.gaierror:
+        logger.warning(f"DNS record not found for {hostname}")
+        return False
+    except Exception as e:
+        logger.warning(f"Error checking DNS for {hostname}: {str(e)}")
         return False
 
 
@@ -542,12 +622,14 @@ def _analyse_url_impl(url):
 
     features['DNS_Record'] = 1 if check_dns_record(hostname) else -1
 
-    # Web traffic, page rank, google index — not automatically detectable,
-    # default to neutral (1) so they don't skew the model
-    features['Web_Traffic'] = 1
-    features['Page_Rank'] = 1
-    features['Google_Index'] = 1
-    features['Links_Pointing_to_Page'] = 1
+    # Web traffic, page rank, google index, links — not automatically detectable
+    # Use neutral value (0) instead of optimistic value (1) to avoid biasing toward "legitimate"
+    # A better approach would be to implement actual lookups using APIs or remove these features
+    features['Web_Traffic'] = 0
+    features['Page_Rank'] = 0
+    features['Google_Index'] = 0
+    features['Links_Pointing_to_Page'] = 0
+    logger.debug("External features (Web_Traffic, Page_Rank, etc.) set to neutral (0) - API integration recommended")
 
     # Statistical report — flag if URL or page title contains suspicious keywords
     page_title = page.get('Page_Title', '').lower()

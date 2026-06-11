@@ -5,10 +5,28 @@ import plotly.graph_objects as go
 import requests
 import time
 import os
+import logging
+from pathlib import Path
 from dotenv import load_dotenv
+from urllib.parse import urlparse
+
+# ── Configure logging ──
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
-VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
+
+# Try to get API key from Streamlit Secrets (Streamlit Cloud), fallback to .env
+try:
+    VIRUSTOTAL_API_KEY = st.secrets.get("VIRUSTOTAL_API_KEY")
+except (FileNotFoundError, KeyError):
+    VIRUSTOTAL_API_KEY = os.getenv("VIRUSTOTAL_API_KEY")
+
+if not VIRUSTOTAL_API_KEY:
+    logger.warning("VirusTotal API key not found in secrets or .env file")
 
 # ── Page config ──
 st.set_page_config(
@@ -18,51 +36,10 @@ st.set_page_config(
 )
 
 # ── Constants ──
-CORRECT_ORDER = [
-    'Having_IP_Address', 'URL_Length', 'Shortining_Service',
-    'Having_At_Symbol', 'Double_Slash_Redirect', 'Prefix_Suffix',
-    'Having_Sub_Domain', 'SSLfinal_State', 'Domain_Reg_Length',
-    'Favicon', 'Port', 'HTTPS_Token', 'Request_URL',
-    'URL_of_Anchor', 'Links_in_Tags', 'SFH',
-    'Submitting_to_Email', 'Abnormal_URL', 'Redirect',
-    'On_Mouseover', 'RightClick', 'PopUpWindow', 'Iframe',
-    'Age_of_Domain', 'DNS_Record', 'Web_Traffic',
-    'Page_Rank', 'Google_Index', 'Links_Pointing_to_Page',
-    'Statistical_Report'
-]
+from config import MODEL_FEATURE_ORDER, FEATURE_DEFAULTS
 
-ALL_FEATURE_DEFAULTS = {
-    'Having_IP_Address':      1,
-    'URL_Length':             1,
-    'Shortining_Service':     1,
-    'Having_At_Symbol':       1,
-    'Double_Slash_Redirect':  1,
-    'Prefix_Suffix':          1,
-    'Having_Sub_Domain':      1,
-    'SSLfinal_State':         1,
-    'Domain_Reg_Length':      1,
-    'Favicon':                1,
-    'Port':                   1,
-    'HTTPS_Token':            1,
-    'Request_URL':            1,
-    'URL_of_Anchor':          1,
-    'Links_in_Tags':          1,
-    'SFH':                    1,
-    'Submitting_to_Email':    1,
-    'Abnormal_URL':           1,
-    'Redirect':               0,
-    'On_Mouseover':           1,
-    'RightClick':             1,
-    'PopUpWindow':            1,
-    'Iframe':                 1,
-    'Age_of_Domain':          1,
-    'DNS_Record':             1,
-    'Web_Traffic':            1,
-    'Page_Rank':              1,
-    'Google_Index':           1,
-    'Links_Pointing_to_Page': 1,
-    'Statistical_Report':     1,
-}
+CORRECT_ORDER = MODEL_FEATURE_ORDER
+ALL_FEATURE_DEFAULTS = FEATURE_DEFAULTS
 
 TOP_FEATURES = {
     'SSLfinal_State': {
@@ -117,23 +94,78 @@ TOP_FEATURES = {
     },
 }
 
-# ── Load model ──
+# ── Load model with error handling ──
 @st.cache_resource
 def load_model():
-    return joblib.load('models/phishing_model.pkl')
+    """Load the trained phishing detection model with safety checks."""
+    model_path = Path('models/phishing_model.pkl')
+    
+    # Check file exists
+    if not model_path.exists():
+        error_msg = f"Model file not found at {model_path.absolute()}"
+        logger.error(error_msg)
+        st.error(f"❌ {error_msg}")
+        st.stop()
+    
+    try:
+        # Load model
+        model = joblib.load(str(model_path))
+        logger.info("Model loaded successfully")
+        return model
+    except Exception as e:
+        error_msg = f"Failed to load model: {str(e)}"
+        logger.error(error_msg)
+        st.error(f"❌ {error_msg}")
+        st.stop()
 
-model = load_model()
+try:
+    model = load_model()
+except Exception as e:
+    logger.error(f"Critical error during model initialization: {str(e)}")
+    st.stop()
+
+# ── Helper: validate URL format ──
+def is_valid_url(url: str) -> bool:
+    """Validate that input is a valid URL format."""
+    if not url or not url.strip():
+        return False
+    try:
+        result = urlparse(url)
+        # Check if at least has a netloc (domain part)
+        if not result.netloc and not url.startswith('http'):
+            return False
+        return True
+    except Exception:
+        return False
 
 # ── Helper: run model prediction ──
-def run_model(feature_dict):
-    full_input = ALL_FEATURE_DEFAULTS.copy()
-    full_input.update(feature_dict)
-    input_df = pd.DataFrame([full_input])[CORRECT_ORDER]
-    input_array = input_df.values
-    prediction = model.predict(input_array)[0]
-    probability = model.predict_proba(input_array)[0]
-    phishing_prob = probability[1] * 100
-    return prediction, phishing_prob
+def run_model(feature_dict: dict) -> tuple:
+    """Run model prediction with feature validation.
+    
+    Args:
+        feature_dict: Dictionary of features for the model
+        
+    Returns:
+        Tuple of (prediction, phishing_probability_percent)
+    """
+    try:
+        full_input = ALL_FEATURE_DEFAULTS.copy()
+        full_input.update(feature_dict)
+        
+        # Validate feature order matches model expectations
+        input_df = pd.DataFrame([full_input])[CORRECT_ORDER]
+        input_array = input_df.values
+        
+        prediction = model.predict(input_array)[0]
+        probability = model.predict_proba(input_array)[0]
+        phishing_prob = probability[1] * 100
+        
+        logger.info(f"Prediction: {prediction}, Probability: {phishing_prob:.1f}%")
+        return prediction, phishing_prob
+    except Exception as e:
+        logger.error(f"Model prediction failed: {str(e)}")
+        st.error("❌ Unable to run prediction. Please try again.")
+        st.stop()
 
 # ── Helper: show result banner and gauge ──
 def show_result(prediction, phishing_prob):
@@ -164,31 +196,54 @@ def show_result(prediction, phishing_prob):
         st.plotly_chart(fig, use_container_width=True)
 
 # ── Helper: VirusTotal scan ──
-def check_virustotal(url):
+def check_virustotal(url: str) -> tuple:
+    """Scan URL with VirusTotal API.
+    
+    Args:
+        url: URL to scan
+        
+    Returns:
+        Tuple of (stats_dict, error_string)
+    """
     headers = {"x-apikey": VIRUSTOTAL_API_KEY}
     try:
+        # Submit URL for analysis
         submit = requests.post(
             "https://www.virustotal.com/api/v3/urls",
             headers=headers,
             data={"url": url},
-            timeout=10
+            timeout=10,
+            verify=True
         )
         if submit.status_code != 200:
+            logger.warning(f"VirusTotal submission failed: {submit.status_code}")
             return None, "Could not submit URL to VirusTotal."
+        
         analysis_id = submit.json()["data"]["id"]
-        time.sleep(3)
+        time.sleep(3)  # Wait for analysis
+        
+        # Get results
         result = requests.get(
             f"https://www.virustotal.com/api/v3/analyses/{analysis_id}",
             headers=headers,
-            timeout=10
+            timeout=10,
+            verify=True
         )
         if result.status_code != 200:
+            logger.warning(f"VirusTotal retrieval failed: {result.status_code}")
             return None, "Could not retrieve VirusTotal results."
+        
+        logger.info(f"VirusTotal scan successful for {url[:50]}")
         return result.json()["data"]["attributes"]["stats"], None
     except requests.exceptions.Timeout:
-        return None, "VirusTotal request timed out."
+        logger.error("VirusTotal request timed out")
+        return None, "VirusTotal scan timed out. Try again or use the Manual Checklist."
+    except KeyError as e:
+        logger.error(f"VirusTotal API response format error: {str(e)}")
+        return None, "Could not parse VirusTotal response."
     except Exception as e:
-        return None, f"VirusTotal error: {str(e)}"
+        logger.error(f"VirusTotal error: {str(e)}", exc_info=True)
+        return None, "Could not complete VirusTotal scan. Try again."
 
 # ══════════════════════════════════════
 # HEADER
@@ -214,6 +269,8 @@ with tab1:
     # Use session state to trigger analysis so Enter key doesn't fire prematurely
     if "auto_analyse_triggered" not in st.session_state:
         st.session_state.auto_analyse_triggered = False
+    if "auto_url_value" not in st.session_state:
+        st.session_state.auto_url_value = ""
 
     auto_url = st.text_input(
         "Paste URL to analyse:",
@@ -228,10 +285,14 @@ with tab1:
         st.session_state.auto_analyse_triggered = True
         st.session_state.auto_url_value = auto_url
 
-    if st.session_state.auto_analyse_triggered and st.session_state.get("auto_url_value"):
+    if st.session_state.auto_analyse_triggered and st.session_state.auto_url_value:
         url_to_analyse = st.session_state.auto_url_value
         if not url_to_analyse.strip():
             st.warning("Please enter a URL above.")
+            st.session_state.auto_analyse_triggered = False
+        elif not is_valid_url(url_to_analyse):
+            st.warning("⚠️ Please enter a valid URL (e.g., https://example.com)")
+            logger.warning(f"Invalid URL provided: {url_to_analyse[:50]}")
             st.session_state.auto_analyse_triggered = False
         else:
             with st.spinner("Analysing URL... checking SSL, domain age, redirects — this takes about 10 seconds..."):
@@ -254,11 +315,14 @@ with tab1:
                             st.success(explanation)
 
                 except TimeoutError as e:
-                    st.error(f"⏱️ Analysis timed out: {str(e)}")
-                    st.caption("The site may be slow or unreachable. Try again or use the Manual Checklist tab.")
+                    logger.error(f"Analysis timeout: {str(e)}")
+                    st.error("⏱️ Analysis timed out — the site may be slow or unreachable. Try again or use the Manual Checklist tab.")
+                except ValueError as e:
+                    logger.error(f"Validation error: {str(e)}")
+                    st.error(f"⚠️ Unable to analyze this URL. {str(e)}")
                 except Exception as e:
-                    st.error(f"Could not analyse URL: {str(e)}")
-                    st.caption("Make sure the URL starts with http:// or https://")
+                    logger.error(f"Analysis error: {str(e)}", exc_info=True)
+                    st.error("Unable to analyze URL. Please try again or use the Manual Checklist tab.")
 
             st.session_state.auto_analyse_triggered = False
 
@@ -309,6 +373,8 @@ st.caption("Optionally cross-reference with 70+ antivirus engines.")
 
 if "vt_triggered" not in st.session_state:
     st.session_state.vt_triggered = False
+if "vt_url_value" not in st.session_state:
+    st.session_state.vt_url_value = ""
 
 vt_url = st.text_input(
     "Enter the website URL to scan:",
@@ -323,20 +389,25 @@ if vt_btn:
     st.session_state.vt_triggered = True
     st.session_state.vt_url_value = vt_url
 
-if st.session_state.vt_triggered and st.session_state.get("vt_url_value"):
+if st.session_state.vt_triggered and st.session_state.vt_url_value:
     url_to_scan = st.session_state.vt_url_value
     if not url_to_scan.strip():
         st.warning("Please enter a URL above to scan.")
         st.session_state.vt_triggered = False
+    elif not is_valid_url(url_to_scan):
+        st.warning("⚠️ Please enter a valid URL for VirusTotal scan.")
+        st.session_state.vt_triggered = False
     elif not VIRUSTOTAL_API_KEY:
-        st.error("VirusTotal API key not found. Check your Streamlit secrets or .env file.")
+        st.error("VirusTotal API key not configured. See README for setup instructions.")
+        logger.warning("VirusTotal API key missing")
         st.session_state.vt_triggered = False
     else:
         with st.spinner("Submitting to VirusTotal... this takes about 5 seconds"):
             stats, error = check_virustotal(url_to_scan)
 
         if error:
-            st.error(f"Error: {error}")
+            logger.warning(f"VirusTotal error: {error}")
+            st.warning(f"⚠️ {error}")
         else:
             malicious  = stats.get("malicious", 0)
             suspicious = stats.get("suspicious", 0)

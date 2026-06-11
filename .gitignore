@@ -1,24 +1,63 @@
-# Virtual environment
-venv/
-
-# Entire data folder (contains large files and third-party datasets)
-data/
-
-# Models (optional - comment out if you want models on GitHub)
-# models/
-
-# Environment variables / secrets
+# ── Environment Variables & Secrets ──
 .env
+.env.local
+.env.*.local
 *.env
 
-# Python cache
+# ── Virtual environment ──
+venv/
+ENV/
+env/
+.venv
+
+# ── Data folder (large files and third-party datasets) ──
+data/
+
+# ── Models (optional - comment out if you want models on GitHub) ──
+# models/
+*.pkl
+*.joblib
+
+# ── Python cache ──
 __pycache__/
 *.pyc
 *.pyo
+*.py[cod]
+*$py.class
+*.so
 
-# Jupyter checkpoints
+# ── Jupyter checkpoints ──
 .ipynb_checkpoints/
+.jupyter/
 
-# OS files
+# ── IDE & Editor ──
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS files ──
 .DS_Store
 Thumbs.db
+
+# ── Logs ──
+*.log
+logs/
+
+# ── Cache ──
+.cache
+*.cache
+
+# ── Streamlit ──
+.streamlit/
+
+# ── Testing ──
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Temporary files ──
+temp/
+tmp/
+*.tmp

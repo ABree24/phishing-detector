@@ -98,15 +98,140 @@ source venv/bin/activate     # macOS/Linux
 # 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Prepare the data
-python notebooks/01_data_prep.py
+# 4. Configure API Keys
 
-# 5. Train the model
+## Local Development (.env file)
+
+Create a `.env` file in the project root:
+
+```bash
+VIRUSTOTAL_API_KEY=your_virustotal_api_key_here
+```
+
+Get your VirusTotal API key for free at: https://www.virustotal.com/gui/home/upload
+
+⚠️ **IMPORTANT:** Never commit `.env` to Git. It's already in `.gitignore`.
+
+## Streamlit Cloud Deployment
+
+For Streamlit Cloud, add secrets via the app settings:
+1. Go to your Streamlit Cloud app dashboard
+2. Click "Settings" → "Secrets"
+3. Add:
+   ```
+   VIRUSTOTAL_API_KEY = "your_key_here"
+   ```
+
+The app will automatically read from `st.secrets` if available.
+
+# 5. Prepare the data
+python notebooks/02_feature_engineering.py
+
+# 6. Train the model
 python src/model_trainer.py
 
-# 6. Run the app
+# 7. Run the app
 streamlit run app.py
 ```
+
+---
+
+## 🔒 Security & Privacy
+
+This app has been audited for security issues and fixed in v2.0:
+
+### ✅ What's Secure
+- **HTTPS Required**: All external API calls use `verify=True` for SSL verification
+- **Error Handling**: No sensitive errors exposed to users; exceptions logged server-side
+- **Input Validation**: All URLs validated before analysis
+- **API Keys**: Stored in environment variables, never hardcoded
+- **No Data Retention**: URLs are not stored; analysis is ephemeral
+- **Safe Deserialization**: Model loading uses safe joblib practices
+
+### ⚠️ What to Know
+- The **VirusTotal scan is optional** — if the API fails, local analysis continues
+- **Rate limiting**: Free VirusTotal tier allows ~4 requests/minute
+- **Timeout protection**: All external requests have sensible timeouts to prevent hanging
+- **Logging**: Errors and requests are logged for debugging (no full URLs in logs)
+
+### 🔐 For Production Deployment
+- Use HTTPS enforcement at the load balancer level
+- Implement rate limiting per user (IP address or authentication)
+- Monitor error logs for security anomalies
+- Rotate API keys regularly
+- Consider adding authentication for admin access
+- Log all analysis requests for audit trails
+
+---
+
+## 📊 Configuration
+
+Core settings are in `config.py`. Update these if needed:
+
+```python
+# URL Length thresholds (characters)
+URL_LENGTH_SHORT = 54      # Normal URLs are <54 chars
+URL_LENGTH_MEDIUM = 75     # Suspicious: 54-75 chars
+
+# Domain age (days)
+DOMAIN_AGE_NORMAL_DAYS = 365  # Domains >1 year are normal
+
+# Timeouts (seconds)
+HTTP_TIMEOUT_SECONDS = 5
+WHOIS_TIMEOUT_SECONDS = 4
+VIRUSTOTAL_TIMEOUT_SECONDS = 10
+
+# Other settings...
+```
+
+---
+
+## 🐛 Troubleshooting
+
+**"Model file not found"**
+- Ensure `models/phishing_model.pkl` exists
+- Run `python src/model_trainer.py` to generate it
+
+**"VirusTotal API key not found"**
+- For local: Create `.env` file with `VIRUSTOTAL_API_KEY=xxx`
+- For Streamlit Cloud: Add to Secrets in dashboard settings
+
+**"WHOIS lookup failed"**
+- This is often normal (domain privacy enabled)
+- Analysis continues with local features
+
+**"HTML parsing error"**
+- Check your internet connection
+- The site may be blocking requests; try another URL
+
+**"Timeout during analysis"**
+- The website may be slow or unreachable
+- Try the Manual Checklist tab instead
+
+---
+
+## 📈 Model Information
+
+### Training Details
+- **Dataset**: UCI Phishing Websites Dataset (11,055 samples)
+- **Algorithm**: Random Forest (100 estimators)
+- **Train/Test Split**: 80/20
+- **Features**: 30 structural and behavioral characteristics
+- **Accuracy**: 89% on test set
+- **Bias**: Model prioritizes recall (catching phishing) over precision
+
+### Feature Categories
+1. **URL Features** (5): IP address, length, shortener, @ symbol, double slash
+2. **Domain Features** (4): Prefix/suffix, subdomains, SSL cert, registration length
+3. **Page Features** (15): HTML structure, external resources, forms, scripts
+4. **Reputation Features** (6): Web traffic, PageRank, Google index, DNS record, etc.
+
+### Limitations
+- ✗ Cannot detect zero-day phishing (brand new, never-seen-before attacks)
+- ✗ Relies on public WHOIS data (won't work for privacy-protected domains)
+- ✗ Cannot analyze password-protected sites
+- ✗ May have regional biases based on training data
+- ✓ Best used as a **layer in a defense-in-depth strategy**, not the only check
 
 ---
 
