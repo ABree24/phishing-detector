@@ -8,16 +8,23 @@
 
 ---
 
-## 📌 Project Overview
+## Project Overview
 
 Phishing attacks are one of the most common cybersecurity threats, tricking users into
-revealing credentials on fake websites. This project builds a machine learning classifier
-that analyses 30 website characteristics — such as SSL certificate validity, URL structure,
-and domain age — to determine whether a site is likely phishing or legitimate.
+revealing credentials on fake websites. This project builds a two-layer detection system:
 
-The model achieves **89% accuracy** on the UCI Phishing Dataset (11,055 samples), with
-**92% recall on phishing sites** — meaning it correctly catches 9 out of 10 phishing attempts.
+**Layer 1 — Machine Learning Model**
+A Random Forest classifier trained on the UCI Phishing Dataset (11,055 samples) achieving
+89% accuracy. The model analyses 30 website characteristics to determine whether a site
+is likely phishing or legitimate.
 
+**Layer 2 — VirusTotal Integration**
+Real-time cross-referencing against 90+ antivirus engines via the VirusTotal API.
+
+**Two ways to use it:**
+- 🔗 **Auto URL Analyser** — paste any URL for instant automatic analysis with plain
+  English explanations of every finding
+- 📋 **Manual Checklist** — answer 10 questions about a site for a structured assessment
 ---
 
 ## How It Works
